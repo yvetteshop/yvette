@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ate Yvette's Shop Admin (Open-in-Browser)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+<body class="bg-blue-50 text-slate-800">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6 bg-blue-700 text-white p-4 rounded-xl shadow-md">
+      <h1 class="text-2xl font-semibold">Ate Yvette's Shop — Admin Panel</h1>
+      <div class="text-sm">(Admin-only interface · data stored locally in browser)</div>
+    </header>
+
+    <main class="bg-white p-6 rounded-xl shadow-lg border border-blue-200">
+      <div class="grid gap-4 mb-6">
+        <button id="btnAddCustomer" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow" type="button">Add Customer</button>
+        <button id="btnScanQR" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow" type="button">Scan QR / Add Points</button>
+        <button id="btnRedeem" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow" type="button">Redeem Points</button>
+        <button id="btnViewCustomers" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg shadow" type="button">View Customers</button>
+        <button id="btnExport" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg shadow" type="button">Export Data</button>
+      </div>
+
+      <input type="text" id="searchCustomer" placeholder="Search by name or ID..." class="border border-blue-300 rounded px-2 py-1 mb-4 w-full hidden" />
+      <div id="outputArea" class="mt-6"></div>
+      <div id="cardPreview" class="mt-6 p-4 bg-blue-100 rounded-lg hidden">
+        <canvas id="cardCanvas" width="350" height="200" class="border border-blue-400 rounded-lg"></canvas>
+        <button id="downloadCard" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow">Download Card</button>
+      </div>
+
+      <div id="transactionModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+        <div class="bg-white p-6 rounded-xl max-w-md w-full">
+          <h2 class="text-xl font-semibold mb-4">Transaction Details</h2>
+          <div id="transactionContent" class="text-sm max-h-64 overflow-y-auto"></div>
+          <button id="closeTransaction" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow">Close</button>
+        </div>
+      </div>
+
+      <input type="file" id="qrInput" accept="image/*" class="hidden" />
+    </main>
+
+    <footer class="text-center text-blue-800 mt-8 text-sm">
+      © 2025 Ate Yvette's Shop — Reward System Admin
+    </footer>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  let customers = JSON.parse(localStorage.getItem('customers') || '[]');
+
+  function saveData() {
+    localStorage.setItem('customers', JSON.stringify(customers));
+  }
+
+  const cardPreviewDiv = document.getElementById('cardPreview');
+  const cardCanvas = document.getElementById('cardCanvas');
+  const downloadBtn = document.getElementById('downloadCard');
+  const qrInput = document.getElementById('qrInput');
+  const searchInput = document.getElementById('searchCustomer');
+  const transactionModal = document.getElementById('transactionModal');
+  const transactionContent = document.getElementById('transactionContent');
+  const closeTransaction = document.getElementById('closeTransaction');
+
+  async function generateCard(customer) {
+    cardPreviewDiv.classList.remove('hidden');
+    const ctx = cardCanvas.getContext('2d');
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(0, 0, cardCanvas.width, cardCanvas.height);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(6,6,cardCanvas.width-12,cardCanvas.height-12);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px sans-serif';
+    ctx.fillText("Ate Yvette's Shop", 20, 40);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Name: ' + customer.name, 20, 80);
+    ctx.fillText('ID: ' + customer.id, 20, 105);
+
+    const qrDataUrl = await QRCode.toDataURL(customer.id, { width: 120, margin: 1, color: { dark: '#000000', light: '#ffffff' } });
+    const img = new Image();
+    img.onload = () => ctx.drawImage(img, cardCanvas.width - 140, 60, 120, 120);
+    img.src = qrDataUrl;
+  }
+
+  downloadBtn.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = 'customer_card.png';
+    link.href = cardCanvas.toDataURL();
+    link.click();
+  });
+
+  function addCustomer() {
+    const name = prompt('Enter customer name:');
+    if (!name) return;
+
+    const id = 'CUST' + String(customers.length + 1).padStart(4, '0');
+    const newCust = { id, name, points: 0, totalPaid: 0, transactions: [] };
+    customers.push(newCust);
+    saveData();
+    generateCard(newCust);
+    showCustomers();
+  }
+
+  function showCustomers(filtered = null) {
+    searchInput.classList.remove('hidden');
+    const list = filtered || customers;
+    const output = document.getElementById('outputArea');
+    if (list.length === 0) {
+      output.innerHTML = '<p class="text-center text-gray-600">No customers found.</p>';
+      return;
+    }
+    output.innerHTML = `
+      <table class="w-full text-sm border border-blue-300 rounded-lg">
+        <thead class="bg-blue-200 text-blue-800">
+          <tr><th class="p-2 border">ID</th><th class="p-2 border">Name</th><th class="p-2 border">Total Paid (₱)</th><th class="p-2 border">Points</th><th class="p-2 border">Actions</th></tr>
+        </thead>
+        <tbody>
+          ${list.map(c => `
+            <tr class="border text-center">
+              <td class="p-2 border">${c.id}</td>
+              <td class="p-2 border cursor-pointer" onclick="editName('${c.id}', this)">${c.name}</td>
+              <td class="p-2 border">₱${Number(c.totalPaid).toFixed(2)}</td>
+              <td class="p-2 border">${c.points.toFixed(2)}</td>
+              <td class="p-2 border">
+                <button class='bg-blue-600 text-white px-2 py-1 rounded' onclick='addPayment("${c.id}")'>Add Payment</button>
+                <button class='bg-blue-500 text-white px-2 py-1 rounded' onclick='redeemPoints("${c.id}")'>Redeem</button>
+                <button class='bg-green-600 text-white px-2 py-1 rounded' onclick='viewQRCode("${c.id}")'>View QR</button>
+                <button class='bg-yellow-500 text-white px-2 py-1 rounded' onclick='viewTransactions("${c.id}")'>Transactions</button>
+                <button class='bg-red-600 text-white px-2 py-1 rounded' onclick='deleteCustomer("${c.id}")'>Delete</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  window.editName = function(id, cell) {
+    const cust = customers.find(c => c.id === id);
+    if (!cust) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = cust.name;
+    input.className = 'border rounded px-1 py-0 w-full text-center';
+    cell.innerHTML = '';
+    cell.appendChild(input);
+    input.focus();
+
+    input.addEventListener('blur', () => {
+      const newName = input.value.trim();
+      if(newName) {
+        cust.name = newName;
+        saveData();
+      }
+      showCustomers();
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter') input.blur();
+      if(e.key === 'Escape') showCustomers();
+    });
+  }
+
+  searchInput.addEventListener('input', () => {
+    const term = searchInput.value.toLowerCase();
+    const filtered = customers.filter(c => c.name.toLowerCase().includes(term) || c.id.toLowerCase().includes(term));
+    showCustomers(filtered);
+  });
+
+  window.addPayment = function(id) {
+    const cust = customers.find(c => c.id === id);
+    if (!cust) return alert('Customer not found');
+    let amountStr = prompt('Enter payment amount (₱):');
+    if (!amountStr) return;
+    const amount = parseFloat(amountStr.replace(/,/g, ''));
+    if (isNaN(amount) || amount <= 0) return;
+    const points = parseFloat((amount / 50).toFixed(2));
+    cust.points += points;
+    cust.totalPaid += amount;
+    cust.transactions.push({ date: new Date().toLocaleString(), type: 'Payment', amount, points });
+    saveData();
+    alert(`${points.toFixed(2)} points added to ${cust.name}`);
+    showCustomers();
+  }
+
+  window.viewQRCode = function(id) {
+    const cust = customers.find(c => c.id === id);
+    if (!cust) return alert('Customer not found');
+    generateCard(cust);
+  }
+
+  window.viewTransactions = function(id) {
+    const cust = customers.find(c => c.id === id);
+    if (!cust) return alert('Customer not found');
+    transactionContent.innerHTML = '';
+    if(cust.transactions.length === 0){
+      transactionContent.innerHTML = '<p>No transactions found.</p>';
+    } else {
+      transactionContent.innerHTML = `<table class='w-full text-sm border border-blue-300 rounded-lg'>
+        <thead class='bg-blue-200 text-blue-800'><tr><th class='p-2 border'>Date</th><th class='p-2 border'>Type</th><th class='p-2 border'>Amount (₱)</th><th class='p-2 border'>Points</th></tr></thead>
+        <tbody>
+          ${cust.transactions.map(t => `
+            <tr class='border text-center'>
+              <td class='p-2 border'>${t.date}</td>
+              <td class='p-2 border'>${t.type}</td>
+              <td class='p-2 border'>${t.amount ? t.amount.toFixed(2) : '-'}</td>
+              <td class='p-2 border'>${t.points ? t.points.toFixed(2) : (t.redeem ? t.redeem.toFixed(2) : '-')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+    }
+    transactionModal.classList.remove('hidden');
+  }
+
+  closeTransaction.addEventListener('click', () => {
+    transactionModal.classList.add('hidden');
+  });
+
+  window.deleteCustomer = function(id) {
+    if (!confirm('Are you sure you want to delete this customer?')) return;
+    customers = customers.filter(c => c.id !== id);
+    saveData();
+    showCustomers();
+  };
+
+  function scanQRAndAddPoints() {
+    qrInput.click();
+  }
+
+  qrInput.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function() {
+      const img = new Image();
+      img.onload = function() {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, canvas.width, canvas.height);
+        if (!code) return alert('QR code not detected');
+        const cust = customers.find(c => c.id === code.data);
+        if (!cust) return alert('Customer not found');
+        let amountStr = prompt('Enter payment amount (₱):');
+        if (!amountStr) return;
+        const amount = parseFloat(amountStr.replace(/,/g, ''));
+        if (isNaN(amount) || amount <= 0) return;
+        const points = parseFloat((amount / 50).toFixed(2));
+        cust.points += points;
+        cust.totalPaid += amount;
+        cust.transactions.push({ date: new Date().toLocaleString(), type: 'Payment', amount, points });
+        saveData();
+        alert(`${points.toFixed(2)} points added to ${cust.name}`);
+        showCustomers();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  window.redeemPoints = function(id) {
+    const cust = customers.find(c => c.id === id);
+    if (!cust) return alert('Customer not found');
+    const points = parseFloat(prompt(`Enter points to redeem (Available: ${cust.points.toFixed(2)}):`));
+    if (isNaN(points) || points <= 0 || points > cust.points) return alert('Invalid points');
+    cust.points -= points;
+    cust.transactions.push({ date: new Date().toLocaleString(), type: 'Redeem', redeem: points });
+    saveData();
+    alert(`${points.toFixed(2)} points redeemed successfully!`);
+    showCustomers();
+  }
+
+  function exportData() {
+    if (customers.length === 0) return alert('No data to export');
+    let csv = 'ID,Name,TotalPaid,Points\n';
+    customers.forEach(c => { csv += `${c.id},${c.name},${c.totalPaid.toFixed(2)},${c.points.toFixed(2)}\n`; });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'customers.csv';
+    a.click();
+  }
+
+  document.getElementById('btnAddCustomer').addEventListener('click', addCustomer);
+  document.getElementById('btnViewCustomers').addEventListener('click', () => showCustomers());
+  document.getElementById('btnRedeem').addEventListener('click', () => {
+    const id = prompt('Enter Customer ID to redeem:');
+    if(id) redeemPoints(id);
+  });
+  document.getElementById('btnExport').addEventListener('click', exportData);
+  document.getElementById('btnScanQR').addEventListener('click', scanQRAndAddPoints);
+
+});
+</script>
+</body>
+</html>
